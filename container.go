@@ -141,17 +141,25 @@ func init() {
 }
 
 // CreateContainer creates a new container with the given configuration but does not start it.
+// This is a v1 schema call.
 func CreateContainer(id string, c *ContainerConfig) (Container, error) {
-	return createContainerWithJSON(id, c, "")
+	return createContainerWithJSON(id, c, nil, "")
 }
 
 // CreateContainerWithJSON creates a new container with the given configuration but does not start it.
 // It is identical to CreateContainer except that optional additional JSON can be merged before passing to HCS.
+// This is a v1 schema call.
 func CreateContainerWithJSON(id string, c *ContainerConfig, additionalJSON string) (Container, error) {
-	return createContainerWithJSON(id, c, additionalJSON)
+	return createContainerWithJSON(id, c, nil, additionalJSON)
 }
 
-func createContainerWithJSON(id string, c *ContainerConfig, additionalJSON string) (Container, error) {
+// CreateContainerV2 creates a new container with the given configuration but does not start it.
+// Additional JSON is optional and merged before passing to HCS. This is a v2 schema call
+func CreateContainerV2(id string, c *ContainerConfigV2, additionalJSON string) (Container, error) {
+	return createContainerWithJSON(id, nil, c, additionalJSON)
+}
+
+func createContainerWithJSON(id string, cV1 *ContainerConfig, cV2 *ContainerConfigV2, additionalJSON string) (Container, error) {
 	operation := "CreateContainer"
 	title := "HCSShim::" + operation
 
@@ -159,12 +167,28 @@ func createContainerWithJSON(id string, c *ContainerConfig, additionalJSON strin
 		id: id,
 	}
 
-	configurationb, err := json.Marshal(c)
-	if err != nil {
-		return nil, err
+	if cV1 == nil && cV2 == nil {
+		return nil, fmt.Errorf("no schema supplied")
+	}
+	if cV1 != nil && cV2 != nil {
+		return nil, fmt.Errorf("cannot specify both v1 and v2 schemas")
 	}
 
-	configuration := string(configurationb)
+	configuration := ""
+	if cV1 != nil {
+		configurationb, err := json.Marshal(cV1)
+		if err != nil {
+			return nil, err
+		}
+		configuration = string(configurationb)
+	} else {
+		configurationb, err := json.Marshal(cV2)
+		if err != nil {
+			return nil, err
+		}
+		configuration = string(configurationb)
+	}
+
 	logrus.Debugf(title+" id=%s config=%s", id, configuration)
 
 	// Merge any additional JSON. Priority is given to what is passed in explicitly,
@@ -207,7 +231,7 @@ func createContainerWithJSON(id string, c *ContainerConfig, additionalJSON strin
 		}
 	}
 
-	err = processAsyncHcsResult(createError, resultp, container.callbackNumber, hcsNotificationSystemCreateCompleted, &defaultTimeout)
+	err := processAsyncHcsResult(createError, resultp, container.callbackNumber, hcsNotificationSystemCreateCompleted, &defaultTimeout)
 	if err != nil {
 		if err == ErrTimeout {
 			// Terminate the container if it still exists. We're okay to ignore a failure here.
